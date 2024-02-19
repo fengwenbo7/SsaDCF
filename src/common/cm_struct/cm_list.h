@@ -123,6 +123,7 @@ static inline status_t cm_ptlist_add(ptlist_t *list, pointer_t item)
 {
     if (list->count >= list->capacity) { /* extend the list */
         if (cm_ptlist_extend(list, LIST_EXTENT_SIZE) != CM_SUCCESS) {
+            LOG_DEBUG_ERR("cm_ptlist_add.cm_ptlist_extend failed");
             return CM_ERROR;
         }
     }
@@ -135,6 +136,7 @@ static inline status_t cm_ptlist_insert(ptlist_t *list, uint32 index, pointer_t 
 {
     if (index >= list->capacity) { /* extend the list */
         if (cm_ptlist_extend(list, (index - list->capacity) + LIST_EXTENT_SIZE) != CM_SUCCESS) {
+            LOG_DEBUG_ERR("cm_ptlist_insert.cm_ptlist_extend failed");
             return CM_ERROR;
         }
     }

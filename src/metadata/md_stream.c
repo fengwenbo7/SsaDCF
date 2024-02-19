@@ -168,12 +168,15 @@ status_t add_stream_member(dcf_streams_t* stream_list, uint32 stream_id, dcf_nod
 {
     uint32 node_id = node_info->node_id;
     if (check_stream_id(stream_id) != CM_SUCCESS) {
+        LOG_DEBUG_ERR("[META]check_stream_id failed");
         return CM_ERROR;
     }
     if (check_node_id(node_id) != CM_SUCCESS) {
+        LOG_DEBUG_ERR("[META]check_node_id failed");
         return CM_ERROR;
     }
     if (check_voting_weight(node_info->voting_weight) != CM_SUCCESS) {
+        LOG_DEBUG_ERR("[META]check_voting_weight failed");
         return CM_ERROR;
     }
 
@@ -187,15 +190,18 @@ status_t add_stream_member(dcf_streams_t* stream_list, uint32 stream_id, dcf_nod
 
     if (stream != NULL) {
         if (stream_node_isexists(stream_list, stream_id, node_id)) {
+            LOG_DEBUG_ERR("[META]stream_node_isexists failed");
             return CM_ERROR;
         }
         stream_exists = CM_TRUE;
     } else {
         stream = malloc(sizeof(dcf_stream_t));
         if (stream == NULL) {
+            LOG_DEBUG_ERR("[META]null stream");
             return CM_ERROR;
         }
         if (memset_sp(stream, sizeof(dcf_stream_t), 0, sizeof(dcf_stream_t)) != EOK) {
+            LOG_DEBUG_ERR("[META]memset_sp stream failed");    
             CM_FREE_PTR(stream);
             return CM_ERROR;
         }
@@ -207,6 +213,7 @@ status_t add_stream_member(dcf_streams_t* stream_list, uint32 stream_id, dcf_nod
         if (!stream_exists) {
             CM_FREE_PTR(stream);
         }
+            LOG_DEBUG_ERR("[META]node_new malloc failed");    
         return CM_ERROR;
     }
     *node_new = *node_info;

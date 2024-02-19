@@ -324,6 +324,7 @@ status_t md_init(uint32 node_id, const char* cfg_str)
         }
         status_t ret = parse_streams_cfg(streams, cfg_str);
         if (ret != CM_SUCCESS) {
+            LOG_RUN_ERR("[META]parse_streams_cfg failed.");
             CM_THROW_ERROR(ERR_PARSE_CFG_STR, cfg_str);
             return ret;
         }
