@@ -84,6 +84,11 @@ extern "C" {
 #define MD_GET_STREAMS_NODE(streams, stream_id, node_id) \
     MD_GET_STREAM_NODE(MD_GET_STREAM((streams), (stream_id)), (node_id))
 
+#define MD_GET_TEAM(teams,team_id) ((dcf_team_t *)cm_ptlist_get(&(teams)->team_list,(team_id)))
+#define MD_GET_TEAM_STREAMS(teams,team_id) ((dcf_streams_t *)(&(MD_GET_TEAM(teams,team_id)->streams_list)))
+#define MD_GET_TEAM_STREAM(teams,team_id,stream_id) ((dcf_stream_t *)MD_GET_STREAM((MD_GET_TEAM_STREAMS(teams,team_id)),stream_id))
+#define MD_GET_TEAM_STREAM_NODE(teams,team_id,stream_id,node_id) ((dcf_node_t *)MD_GET_STREAM_NODE(MD_GET_TEAM_STREAM(teams,team_id,stream_id),node_id))
+
 /* every option use one bit of flags */
 #define OP_FLAG_NONE                 0x0000
 #define OP_FLAG_ADD                  0x0001  // add member
@@ -139,6 +144,21 @@ typedef struct st_stream_t {
 typedef struct st_streams_t {
     ptlist_t stream_list;
 } dcf_streams_t;
+
+/******Add by fwb-ruc********/
+
+typedef struct st_team_t{
+    uint32 team_id;
+    uint32 stream_id;
+    uint32 node_id;
+    dcf_node_t* node_;
+}dcf_team_t;
+
+typedef struct st_teams_t{
+    ptlist_t team_list;
+}dcf_teams_t;
+
+/******Add by fwb-ruc********/
 
 typedef enum en_entry_type {
     ENTRY_TYPE_LOG  = 0,
@@ -273,7 +293,9 @@ typedef struct st_dcf_meta {
     latch_t latch;
     meta_status_t status;
     uint32 current_node_id;
+    uint32 current_team_id;
     dcf_node_t* all_nodes[CM_MAX_NODE_COUNT];
+    dcf_teams_t* teams_;
     dcf_streams_t* streams;
     char* buffer;
     uint32 checksum;

@@ -33,6 +33,7 @@
 #include "md_param.h"
 #include "md_store.h"
 #include "cJSON.h"
+#include "md_team.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,27 @@ extern "C" {
 static dcf_meta_t g_metadata;
 
 static status_t parse_streams_cfg(dcf_streams_t* streams, const char *cfg_str);
+
+dcf_teams_t* new_teams(){
+    dcf_teams_t* teams=NULL;
+    teams=malloc(sizeof(dcf_teams_t));
+    if(teams==NULL){
+        LOG_RUN_ERR("[META]malloc teams failed");
+        return NULL;
+    }
+    cm_ptlist_init(&teams->team_list);
+    return teams;
+}
+
+dcf_team_t* new_team(){
+    dcf_team_t* team=NULL;
+    team=malloc(sizeof(dcf_team_t));
+    if(team==NULL){
+        return NULL;
+    }
+    cm_ptlist_init(&team->streams_list);
+    return team;
+}
 
 dcf_streams_t* new_streams()
 {
@@ -75,14 +97,14 @@ status_t get_store_stream(dcf_meta_t* metadata, bool32* is_exists)
         *is_exists = CM_FALSE;
         return CM_SUCCESS;
     }
-    metadata->streams = new_streams();
-    if (metadata->streams == NULL) {
+    metadata->teams_ = new_teams();
+    if (metadata->teams_ == NULL) {
         CM_FREE_PTR(buffer);
         return CM_ERROR;
     }
-    if (parse_streams_cfg(metadata->streams, buffer) != CM_SUCCESS) {
+    if (parse_teams_cfg(metadata->teams_, buffer) != CM_SUCCESS) {
         CM_FREE_PTR(buffer);
-        CM_FREE_PTR(metadata->streams);
+        CM_FREE_PTR(metadata->teams_);
         return CM_ERROR;
     }
 
@@ -112,6 +134,7 @@ status_t append_nodes(dcf_node_t** node_list, dcf_streams_t* streams)
             if (node->default_role < DCF_ROLE_PASSIVE) {
                 stream->voter_num += node->voting_weight;
             }
+            LOG_DEBUG_INF("debug:metadata 115.append_node_info.node_id:%u,port:%u",node->node_id,node->port);
             CM_RETURN_IFERR(append_node_info(node_list, node));
         }
     }
@@ -124,7 +147,9 @@ status_t reset_node_list(dcf_node_t** node_list, dcf_streams_t* streams)
         CM_FREE_PTR(node_list[i]);
     }
 
+    LOG_DEBUG_INF("debug:metadata 127.append_nodes");
     CM_RETURN_IFERR(append_nodes(node_list, streams));
+    LOG_DEBUG_INF("debug:metadata 129.append_nodes over");
     return CM_SUCCESS;
 }
 
@@ -132,6 +157,85 @@ static bool32 is_valid_node_role_cfg(dcf_role_t role_type)
 {
     return ((role_type == DCF_ROLE_FOLLOWER) || (role_type == DCF_ROLE_LEADER) || (role_type == DCF_ROLE_LOGGER) ||
         (role_type == DCF_ROLE_PASSIVE));
+}
+
+static status_t parse_cfg_single_node(dcf_node_t* node_info,const cJSON* cjson)
+{
+    cJSON *cfg_item = NULL;
+
+    // node_id
+    cfg_item = cJSON_GetObjectItem(cjson, "node_id");
+    CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
+    node_info->node_id = cfg_item->valueint;
+    // ip
+    cfg_item = cJSON_GetObjectItem(cjson, "ip");
+    CM_RETURN_IF_FALSE(cJSON_IsString(cfg_item));
+    char *ip = cJSON_GetStringValue(cfg_item);
+    MEMS_RETURN_IFERR(strcpy_s(node_info->ip, CM_MAX_IP_LEN, ip));
+    // port
+    cfg_item = cJSON_GetObjectItem(cjson, "port");
+    CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
+    node_info->port = cfg_item->valueint;
+    // role
+    cfg_item = cJSON_GetObjectItem(cjson, "role");
+    CM_RETURN_IF_FALSE(cJSON_IsString(cfg_item));
+    char *role_name = cJSON_GetStringValue(cfg_item);
+    dcf_role_t role_type = md_get_roletype_by_name(role_name);
+    if (!is_valid_node_role_cfg(role_type)) {
+        LOG_DEBUG_ERR("[META] parse cjson info: invalid node role(%d) cfg", role_type);
+        return CM_ERROR;
+    }
+    node_info->default_role = role_type;
+
+    node_info->voting_weight = CM_ELC_NORS_WEIGHT;
+    node_info->group = CM_DEFAULT_GROUP_ID;
+    node_info->priority = CM_DEFAULT_ELC_PRIORITY;
+    // weight
+    if (cJSON_HasObjectItem(cjson, "weight") == 1) {
+        cfg_item = cJSON_GetObjectItem(cjson, "weight");
+        CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
+        node_info->voting_weight = cfg_item->valueint;
+    }
+    // group
+    if (cJSON_HasObjectItem(cjson, "group") == 1) {
+        cfg_item = cJSON_GetObjectItem(cjson, "group");
+        CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
+        node_info->group = MAX(cfg_item->valueint, 0); // group in cfg_str should be 0~INT32_MAX
+    }
+    // priority
+    if (cJSON_HasObjectItem(cjson, "priority") == 1) {
+        cfg_item = cJSON_GetObjectItem(cjson, "priority");
+        CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
+        node_info->priority = MAX(cfg_item->valueint, 0); // priority in cfg_str should be 0~INT32_MAX
+    }
+
+    LOG_DEBUG_INF("[META] parse team info: team_id=%u stream_id=%u node_id=%u ip=%s port=%u role=%s group=%u priority=%llu",
+        node_info->node_id, ip, node_info->port, role_name, node_info->group, node_info->priority);
+
+    return CM_TRUE;
+}
+
+static status_t parse_team_cfg_single(dcf_teams_t* teams, dcf_streams_t* streams, cJSON* team, uint32 node_id)
+{
+    uint32 team_id;
+    uint32 stream_id;
+    dcf_node_t node_info;
+    cJSON *cfg_item = NULL;
+
+    // team_id
+    cfg_item = cJSON_GetObjectItem(team, "team_id");
+    CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
+    team_id = cfg_item->valueint;
+
+    // stream_id
+    cfg_item = cJSON_GetObjectItem(team, "stream_id");
+    CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
+    stream_id = cfg_item->valueint;
+
+    LOG_DEBUG_INF("[META] parse team info: team_id=%u stream_id=%u", team_id, stream_id);
+
+    parse_cfg_single_node(&node_info,team);
+    return add_team_member(teams,streams,team_id,stream_id,&node_info,node_id);
 }
 
 static status_t parse_stream_cfg_single(dcf_streams_t* streams, const cJSON* stream)
@@ -144,54 +248,23 @@ static status_t parse_stream_cfg_single(dcf_streams_t* streams, const cJSON* str
     cfg_item = cJSON_GetObjectItem(stream, "stream_id");
     CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
     stream_id = cfg_item->valueint;
-    // node_id
-    cfg_item = cJSON_GetObjectItem(stream, "node_id");
-    CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
-    node_info.node_id = cfg_item->valueint;
-    // ip
-    cfg_item = cJSON_GetObjectItem(stream, "ip");
-    CM_RETURN_IF_FALSE(cJSON_IsString(cfg_item));
-    char *ip = cJSON_GetStringValue(cfg_item);
-    MEMS_RETURN_IFERR(strcpy_s(node_info.ip, CM_MAX_IP_LEN, ip));
-    // port
-    cfg_item = cJSON_GetObjectItem(stream, "port");
-    CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
-    node_info.port = cfg_item->valueint;
-    // role
-    cfg_item = cJSON_GetObjectItem(stream, "role");
-    CM_RETURN_IF_FALSE(cJSON_IsString(cfg_item));
-    char *role_name = cJSON_GetStringValue(cfg_item);
-    dcf_role_t role_type = md_get_roletype_by_name(role_name);
-    if (!is_valid_node_role_cfg(role_type)) {
-        LOG_DEBUG_ERR("[META] parse stream info: invalid node role(%d) cfg", role_type);
-        return CM_ERROR;
-    }
-    node_info.default_role = role_type;
+    
+    parse_cfg_single_node(&node_info,stream);
 
-    node_info.voting_weight = CM_ELC_NORS_WEIGHT;
-    node_info.group = CM_DEFAULT_GROUP_ID;
-    node_info.priority = CM_DEFAULT_ELC_PRIORITY;
-    // weight
-    if (cJSON_HasObjectItem(stream, "weight") == 1) {
-        cfg_item = cJSON_GetObjectItem(stream, "weight");
-        CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
-        node_info.voting_weight = cfg_item->valueint;
-    }
-    // group
-    if (cJSON_HasObjectItem(stream, "group") == 1) {
-        cfg_item = cJSON_GetObjectItem(stream, "group");
-        CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
-        node_info.group = MAX(cfg_item->valueint, 0); // group in cfg_str should be 0~INT32_MAX
-    }
-    // priority
-    if (cJSON_HasObjectItem(stream, "priority") == 1) {
-        cfg_item = cJSON_GetObjectItem(stream, "priority");
-        CM_RETURN_IF_FALSE(cJSON_IsNumber(cfg_item));
-        node_info.priority = MAX(cfg_item->valueint, 0); // priority in cfg_str should be 0~INT32_MAX
-    }
-    LOG_DEBUG_INF("[META] parse stream info: stream_id=%u node_id=%u ip=%s port=%u role=%s group=%u priority=%llu",
-        stream_id, node_info.node_id, ip, node_info.port, role_name, node_info.group, node_info.priority);
     return add_stream_member(streams, stream_id, &node_info);
+}
+
+static status_t parse_teams_cfg(dcf_teams_t* teams, dcf_streams_t* streams, const char* cfg_str, uint32 node_id)
+{
+    cJSON *team_list = cJSON_Parse(cfg_str);
+    CM_RETURN_IF_FALSE_EX(cJSON_IsArray(team_list), cJSON_Delete(team_list));
+    cJSON *team_item = NULL;
+    cJSON_ArrayForEach(team_item, team_list) {
+        CM_RETURN_IF_FALSE_EX(cJSON_IsObject(team_item), cJSON_Delete(team_list));
+        CM_RETURN_IFERR_EX(parse_team_cfg_single(teams, streams, team_item, node_id), cJSON_Delete(team_list));
+    }
+    cJSON_Delete(team_list);
+    return CM_SUCCESS;
 }
 
 static status_t parse_streams_cfg(dcf_streams_t* streams, const char *cfg_str)
@@ -282,13 +355,17 @@ static inline bool32 check_node_id_valid(uint32 node_id)
 {
     bool32 is_valid = CM_FALSE;
     cm_latch_s(&g_metadata.latch, 0, CM_FALSE, NULL);
+    LOG_DEBUG_INF("debug:node id is %u",node_id);
     for (int i = 0; i < CM_MAX_NODE_COUNT; i++) {
         if (g_metadata.all_nodes[i] == NULL) {
             continue;
         }
         if (node_id == g_metadata.all_nodes[i]->node_id) {
             is_valid = CM_TRUE;
+            LOG_DEBUG_INF("debug:find the target node.");
             break;
+        }else{
+            LOG_DEBUG_INF("debug:iter node id:%u",g_metadata.all_nodes[i]->node_id);
         }
     }
     cm_unlatch(&g_metadata.latch, NULL);
@@ -316,18 +393,25 @@ status_t md_init(uint32 node_id, const char* cfg_str)
 
     bool32 is_exists = CM_FALSE;
     CM_RETURN_IFERR(get_store_stream(&g_metadata, &is_exists));
+    LOG_RUN_INF("metadata 319");
     if (is_exists == CM_FALSE) {
-        dcf_streams_t* streams = new_streams();
-        if (streams == NULL) {
-            LOG_RUN_ERR("[META]init metadata stream failed");
+        dcf_teams_t* teams=new_teams();
+        if (teams == NULL) {
+            LOG_RUN_ERR("[META]init metadata teams failed");
             return CM_ERROR;
         }
-        status_t ret = parse_streams_cfg(streams, cfg_str);
+        dcf_streams_t* streams=new_streams();
+        if(streams == NULL){
+            LOG_RUN_ERR("[META]init metadata streams failed");
+            return CM_ERROR;
+        }
+        status_t ret = parse_teams_cfg(teams, streams, cfg_str, node_id);
         if (ret != CM_SUCCESS) {
-            LOG_RUN_ERR("[META]parse_streams_cfg failed.");
+            LOG_RUN_ERR("[META]parse_teams_cfg failed.");
             CM_THROW_ERROR(ERR_PARSE_CFG_STR, cfg_str);
             return ret;
         }
+        g_metadata.teams_ = teams;
         g_metadata.streams = streams;
 
         uint32 size;
@@ -336,6 +420,8 @@ status_t md_init(uint32 node_id, const char* cfg_str)
         CM_RETURN_IFERR(md_store_write(md_get_buffer(), (int32)size));
     }
     g_metadata.status = META_NORMAL;
+
+    LOG_DEBUG_INF("debug:metadata 345.reset_node_list");
     CM_RETURN_IFERR(reset_node_list(g_metadata.all_nodes, g_metadata.streams));
     CM_RETURN_IF_FALSE(check_node_id_valid(node_id));
     g_metadata.current_node_id = node_id;
@@ -548,6 +634,7 @@ status_t md_get_streams_by_node(uint32 node_id, uint32 list[CM_MAX_STREAM_COUNT]
 
 status_t md_add_stream_member(uint32 stream_id, dcf_node_t* node_info)
 {
+    LOG_DEBUG_INF("debug:metadata 556.md_add_stream_member.stream_id:%u,node_id:%u",stream_id,node_info->node_id);
     cm_latch_x(&g_metadata.latch, 0, NULL);
     CM_RETURN_IFERR_EX(add_stream_member(g_metadata.streams, stream_id, node_info),
         cm_unlatch(&g_metadata.latch, NULL));

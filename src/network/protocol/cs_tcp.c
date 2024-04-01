@@ -324,6 +324,11 @@ status_t cs_tcp_connect_core(const tcp_link_t *link, socket_attr_t *sock_attr)
     int32 error_no;
     time_t end_time;
     ret = connect(link->sock, SOCKADDR(&link->remote), link->remote.salen);
+    char sock_ip[CM_MAX_IP_LEN] = { 0 };
+    (void)cm_inet_ntop(SOCKADDR(&link->local), sock_ip, CM_MAX_IP_LEN);
+    char remote_ip[CM_MAX_IP_LEN] = { 0 };
+    (void)cm_inet_ntop(SOCKADDR(&link->remote), remote_ip, CM_MAX_IP_LEN);
+    LOG_DEBUG_INF("cs_tcp_connect_core.connect sock:%d, local_addr:%s,remote_addr:%s,return:%d",link->sock,sock_ip,remote_ip,ret);
     if (ret < 0) {
         if (sock_attr->connect_timeout < 0) {
             end_time = -1;
@@ -343,36 +348,49 @@ status_t cs_tcp_connect_core(const tcp_link_t *link, socket_attr_t *sock_attr)
 status_t cs_tcp_connect(const char *host, uint16 port, tcp_link_t *link, const char *bind_host,
                         socket_attr_t *sock_attr)
 {
+    LOG_DEBUG_INF("cs_tcp_connect:346.host:%s,bind_host:%s",host,bind_host);
     CM_RETURN_IFERR(cm_ipport_to_sockaddr(host, port, &link->remote));
 
+    LOG_DEBUG_INF("cs_tcp_connect:349");
     CM_RETURN_IFERR(cs_create_socket(SOCKADDR_FAMILY(&link->remote), &link->sock));
 
+    LOG_DEBUG_INF("cs_tcp_connect:352");
     if (bind_host != NULL && bind_host[0] != '\0') {
+        LOG_DEBUG_INF("cs_tcp_connect:354");
         if (cm_ipport_to_sockaddr(bind_host, 0, &link->local) != CM_SUCCESS) {
             goto error;
         }
 
+        LOG_DEBUG_INF("cs_tcp_connect:359");
         if (bind(link->sock, SOCKADDR(&link->local), link->local.salen) != 0) {
             CM_THROW_ERROR(ERR_SOCKET_BIND, bind_host, (uint32)0, cm_get_os_error());
             goto error;
         }
     }
 
+    LOG_DEBUG_INF("cs_tcp_connect:366");
     cs_set_buffer_size(link->sock, CM_TCP_DEFAULT_BUFFER_SIZE, CM_TCP_DEFAULT_BUFFER_SIZE);
+    LOG_DEBUG_INF("cs_tcp_connect:368");
     cs_set_conn_timeout(link->sock, sock_attr->connect_timeout);
+    LOG_DEBUG_INF("cs_tcp_connect:370");
     if (cs_tcp_connect_core(link, sock_attr) != CM_SUCCESS) {
         CM_THROW_ERROR(ERR_ESTABLISH_TCP_CONNECTION, host, (uint32)port, cm_get_os_error());
         goto error;
     }
+    LOG_DEBUG_INF("cs_tcp_connect:374");
     cs_reset_conn_timeout(link->sock);
 
+    LOG_DEBUG_INF("cs_tcp_connect:378");
     cs_set_io_mode(link->sock, CM_TRUE, CM_TRUE);
+    LOG_DEBUG_INF("cs_tcp_connect:380");
     cs_set_keep_alive(link->sock, CM_TCP_KEEP_IDLE, CM_TCP_KEEP_INTERVAL, CM_TCP_KEEP_COUNT);
+    LOG_DEBUG_INF("cs_tcp_connect:382");
     cs_set_linger(link->sock, sock_attr->l_onoff, sock_attr->l_linger);
     link->closed = CM_FALSE;
     return CM_SUCCESS;
 
 error:
+    LOG_DEBUG_ERR("cs_tcp_connect connect failed.host:%s,bind_host:%s",host,bind_host);
     (void)cs_close_socket(link->sock);
     link->sock = CS_INVALID_SOCKET;
     link->closed = CM_TRUE;

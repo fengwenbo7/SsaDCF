@@ -68,6 +68,9 @@ static inline void cm_destroy_ptlist(ptlist_t *list)
 
 static inline pointer_t cm_ptlist_get(ptlist_t *list, uint32 index)
 {
+    if(list == NULL){
+        return NULL;
+    }
     if (index >= list->capacity) {
         return NULL;
     }
